@@ -7,10 +7,13 @@
 # 3. prepare a list of new posts to be posted on Weibo
 #	3.1.
 # 4. use Weibo API / external libraries to post on Weibo
-import os.path
+import os
 import json
 import getpass
-import bs4
+import shutil
+import requests
+import time
+from urllib import request
 from base64 import b64encode, b64decode
 from time import sleep
 from Crypto.Cipher import AES
@@ -19,16 +22,21 @@ from Crypto.Random import get_random_bytes
 from pathlib import Path
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.action_chains import ActionChains
+from selenium.webdriver.common.keys import Keys
 from bs4 import BeautifulSoup
 
 INFO_FILE = os.path.join(Path.home(), '.instaweibo_info')
 SECRET = os.path.join(Path.home(), '.secret')
 INS_LATEST = os.path.join(Path.home(), '.insta_latest')
+WEIBO_TOKEN = os.path.join(Path.home(), '.weibo_credentials')
 ROOT_PATH = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+WEIBO_KEY = '1995915790'
+WEIBO_SECRET = '5ea4fa48c658b6e97bdfe1dde80bcd23'
 WEIBO_REDIRECT = 'https://www.instagram.com/cuppad_wei/'
-WEIBO_CODE = 'a6bd3eb88c31fe85f2a84468dde1d9c2'
-WEIBO_TOKEN = '2.00KwDg_EKseELC3aee73cc2c0HAtYV'
+# WEIBO_CODE = 'a6bd3eb88c31fe85f2a84468dde1d9c2'
+# WEIBO_TOKEN = '2.00KwDg_EKseELC3aee73cc2c0HAtYV'
+#code = '4fbafd8801fa897750c0984db0ac248a'
+#token = '2.00DEQs1EKseELC2a82a7b250Cld31E'
 
 def get_key():
 	if os.path.isfile(SECRET):
@@ -80,12 +88,14 @@ def retrieve_user_info():
 	return user_info
 
 def load_user_info():
+	print('Loading user info...')
 	if (os.path.isfile(INFO_FILE)):
 		return retrieve_user_info()
 	else:
 		return setup_user_info()
 
 def setup_browser():
+	print('Setting up headless Chrome browser...')
 	options = Options()
 	options.add_argument('--headless')
 	options.add_argument('--disable-gpu')
@@ -93,10 +103,11 @@ def setup_browser():
 	return webdriver.Chrome(executable_path = driver_path, chrome_options = options)
 
 def set_current_ins_state(browser, ins_id):
+	print('recording current instagram post state...')
 	########## debug ###########
-	# with open(INS_LATEST, 'w') as f:
-	# 	f.write('/p/Btr4E0olMQX/')
-	# return
+	with open(INS_LATEST, 'w') as f:
+		f.write('/p/Btr4E0olMQX/')
+	return
 	########## debug ###########
 	browser.get('https://www.instagram.com/%s/' % ins_id)
 	html = browser.page_source
@@ -107,6 +118,7 @@ def set_current_ins_state(browser, ins_id):
 		f.write(ins_latest)
 
 def get_ins_diff_posts(browser, ins_id):
+	print('retrieving new instagram posts...')
 	with open(INS_LATEST, 'r') as f:
 		latest = f.read()
 	browser.get('https://www.instagram.com/%s/' % ins_id)
@@ -128,9 +140,9 @@ def get_ins_diff_posts(browser, ins_id):
 	return links
 
 def ins_to_weibo_posts(browser, ins_id, ins_posts):
+	print('preparing weibo posts...')
 	posts = []
 	for post_url in ins_posts:
-		print(post_url)
 		browser.get('https://www.instagram.com%s' % post_url)
 		html = browser.page_source
 		soup = BeautifulSoup(html, 'html.parser')
@@ -141,8 +153,63 @@ def ins_to_weibo_posts(browser, ins_id, ins_posts):
 		for tag in comment.find_all('a'):
 			tag.decompose()
 		post = comment.get_text().strip() if user == ins_id else ''
-		posts.append({'image_url': image, 'post': post})
+		posts.append({'image_url': image, 'post': post, 'name': post_url[3:-1]})
 	return posts
+
+def get_weibo_access_token(browser, id, passwd):
+	print('requesting weibo access token...')
+	if os.path.isfile(WEIBO_TOKEN):
+		with open(WEIBO_TOKEN, 'r') as f:
+			cred = f.readlines()
+			weibo_access_token = cred[0]
+			token_expires_at = cred[1]
+		if time.time() < float(token_expires_at):
+			return weibo_access_token
+	weibo_code_url = 'https://api.weibo.com/oauth2/authorize?client_id=%s&redirect_uri=%s&response_type=code' % (WEIBO_KEY, WEIBO_REDIRECT)
+	browser.get(weibo_code_url)
+	browser.find_element_by_id('userId').send_keys(id)
+	sleep(1)
+	browser.find_element_by_id('passwd').send_keys(passwd)
+	sleep(3)
+	browser.find_element_by_class_name('WB_btn_login').send_keys(Keys.ENTER)
+	sleep(3)
+	code = browser.current_url.split('code=')[-1]
+	weibo_oauth_url = 'https://api.weibo.com/oauth2/access_token'
+	payload = {
+		'client_id': WEIBO_KEY,
+		'client_secret': WEIBO_SECRET,
+		'grant_type': 'authorization_code',
+		'code': code,
+		'redirect_uri': WEIBO_REDIRECT
+	}
+	r = requests.post(weibo_oauth_url, data=payload)
+	response_json = json.loads(r.text)
+	weibo_access_token = response_json['access_token']
+	token_expires_at = time.time() + float(response_json['expires_in'])
+	with open(WEIBO_TOKEN, 'w') as f:
+		print(weibo_access_token, file=f)
+		print(token_expires_at, file=f)
+	return weibo_access_token
+
+def post_weibo(weibo_posts, weibo_access_token):
+	if len(weibo_posts) == 0:
+		return
+	print('uploading new weibo posts...')
+	post = weibo_posts[0]
+	weibo_api = 'https://upload.api.weibo.com/2/statuses/upload.json'
+	with open(os.path.join(ROOT_PATH, 'github'), 'rb') as f:
+		pic = f.read()
+	status = ':o :P :D xD'
+	payload = {
+		'access_token': weibo_access_token,
+		'status': status
+	}
+	files = {
+		'pic': pic
+	}
+	r = requests.post(weibo_api, data=payload, files=files)
+	print(r.text)
+
 
 def main():
 	user_info = load_user_info()
@@ -151,6 +218,8 @@ def main():
 	# in a loop
 	ins_posts = get_ins_diff_posts(browser, user_info['ins_id'])
 	weibo_posts = ins_to_weibo_posts(browser, user_info['ins_id'], ins_posts)
+	weibo_access_token = get_weibo_access_token(browser, user_info['weibo_id'], user_info['weibo_pass'])
+	post_weibo(weibo_posts, weibo_access_token)
 
 
 if (__name__ == '__main__'):
