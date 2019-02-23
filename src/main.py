@@ -1,18 +1,11 @@
-# 1. get instagram user id
-#	1.1. for first time users, ask for their instagram id, weibo account/password, store the password securely
-#	1.2. retrieve instagram id from local storage
-# 2. from user id, get user's "new" instagram profile
-#	2.1. store user's latest post of instagram locally to diff later
-#	2.2. schedule to check for new post every X minutes
-# 3. prepare a list of new posts to be posted on Weibo
-#	3.1.
-# 4. use Weibo API / external libraries to post on Weibo
+# -*- coding: utf-8 -*-
 import os
 import json
 import getpass
 import shutil
 import requests
 import time
+import atexit
 from urllib import request
 from base64 import b64encode, b64decode
 from time import sleep
@@ -21,7 +14,7 @@ from Crypto.Util.Padding import pad, unpad
 from Crypto.Random import get_random_bytes
 from pathlib import Path
 from selenium import webdriver
-from selenium.common.exceptions import TimeoutException
+from selenium.common.exceptions import WebDriverException
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.by import By
@@ -35,10 +28,7 @@ INS_LATEST = os.path.join(Path.home(), '.insta_latest')
 WEIBO_TOKEN = os.path.join(Path.home(), '.weibo_credentials')
 ROOT_PATH = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TEMP_PATH = os.path.join(ROOT_PATH, 'temp')
-
-def initialize():
-	if os.path.exists(TEMP_PATH):
-		shutil.rmtree(TEMP_PATH)
+UPDATE_INTERVAL = 3600
 
 def get_key():
 	if os.path.isfile(SECRET):
@@ -102,17 +92,17 @@ def setup_browser():
 	# options.add_argument('--headless')
 	# options.add_argument('--disable-gpu')
 	driver_path = os.path.join(ROOT_PATH, 'bin', 'chromedriver.exe')
-	browser = webdriver.Chrome(executable_path = driver_path, chrome_options = options)
+	browser = webdriver.Chrome(executable_path=driver_path, options=options)
 	browser.execute_script('window.open("")')
 	browser.set_window_size(1024, 768)
 	return browser
 
 def set_current_ins_state(browser, ins_id):
-	print('recording current instagram post state...')
+	print('Recording current instagram post state...')
 	########## debug ###########
-	with open(INS_LATEST, 'w') as f:
-		f.write('/p/Btr4E0olMQX/')
-	return
+	# with open(INS_LATEST, 'w') as f:
+	# 	f.write('/p/Bt1QJy1lwb1/')
+	# return
 	########## debug ###########
 	browser.switch_to_window(browser.window_handles[0])
 	browser.get('https://www.instagram.com/%s/' % ins_id)
@@ -124,7 +114,7 @@ def set_current_ins_state(browser, ins_id):
 		f.write(ins_latest)
 
 def get_ins_diff_posts(browser, ins_id):
-	print('retrieving new instagram posts...')
+	print('Retrieving new instagram posts...')
 	with open(INS_LATEST, 'r') as f:
 		latest = f.read()
 	browser.switch_to_window(browser.window_handles[0])
@@ -147,9 +137,10 @@ def get_ins_diff_posts(browser, ins_id):
 	return links
 
 def ins_to_weibo_posts(browser, ins_id, ins_posts):
-	print('preparing weibo posts...')
+	print('Preparing weibo posts...')
 	weibo_posts = []
-	os.mkdir(TEMP_PATH)
+	if not os.path.exists(TEMP_PATH):
+		os.mkdir(TEMP_PATH)
 	for post_url in ins_posts:
 		browser.get('https://www.instagram.com%s' % post_url)
 		html = browser.page_source
@@ -164,47 +155,11 @@ def ins_to_weibo_posts(browser, ins_id, ins_posts):
 		image_path = os.path.join(TEMP_PATH, post_url[3:-1]) + '.jpg'
 		with open(image_path, 'wb') as f:
 			f.write(request.urlopen(image_url).read())
-		weibo_posts.append({'image_path': image_path, 'post': post})
+		weibo_posts.append({'image_path': image_path, 'post': post, 'url': post_url})
 	return weibo_posts
 
-def get_weibo_access_token(browser, id, passwd):
-	print('requesting weibo access token...')
-	if os.path.isfile(WEIBO_TOKEN):
-		with open(WEIBO_TOKEN, 'r') as f:
-			cred = f.readlines()
-			weibo_access_token = cred[0]
-			token_expires_at = cred[1]
-		if time.time() < float(token_expires_at):
-			return weibo_access_token
-	weibo_code_url = 'https://api.weibo.com/oauth2/authorize?client_id=%s&redirect_uri=%s&response_type=code' % (WEIBO_KEY, WEIBO_REDIRECT)
-	browser.switch_to_window(browser.window_handles[1])
-	browser.get(weibo_code_url)
-	browser.find_element_by_id('userId').send_keys(id)
-	sleep(1)
-	browser.find_element_by_id('passwd').send_keys(passwd)
-	sleep(3)
-	browser.find_element_by_class_name('WB_btn_login').send_keys(Keys.ENTER)
-	sleep(3)
-	code = browser.current_url.split('code=')[-1]
-	weibo_oauth_url = 'https://api.weibo.com/oauth2/access_token'
-	payload = {
-		'client_id': WEIBO_KEY,
-		'client_secret': WEIBO_SECRET,
-		'grant_type': 'authorization_code',
-		'code': code,
-		'redirect_uri': WEIBO_REDIRECT
-	}
-	r = requests.post(weibo_oauth_url, data=payload)
-	response_json = json.loads(r.text)
-	weibo_access_token = response_json['access_token']
-	token_expires_at = time.time() + float(response_json['expires_in'])
-	with open(WEIBO_TOKEN, 'w') as f:
-		print(weibo_access_token, file=f)
-		print(token_expires_at, file=f)
-	return weibo_access_token
-
 def login_weibo(browser, weibo_id, weibo_pass):
-	print('logging in to weibo...')
+	print('Logging in to weibo...')
 	browser.switch_to_window(browser.window_handles[1])
 	weibo_url = 'https://www.weibo.com/login.php'
 	browser.get(weibo_url)
@@ -213,43 +168,57 @@ def login_weibo(browser, weibo_id, weibo_pass):
 	browser.find_element_by_class_name('W_btn_a').send_keys(Keys.ENTER)
 
 def post_weibo(browser, weibo_posts):
+	if len(weibo_posts) == 0:
+		print('Nothing to be post on weibo.')
+		return
 	browser.switch_to_window(browser.window_handles[1])
-	sleep(1)
-	print('posting weibo...')
+	WebDriverWait(browser, 30).until(EC.presence_of_element_located((By.XPATH, '//textarea[@title="微博输入框"]')))
+	print('Posting weibo...')
 	i = 1
+	ins_latest = ''
 	for post in weibo_posts:
+		print('Posting %d of %d...' % (i, len(weibo_posts)), end='')
+		if post['post'] == '':
+			post['post'] = u'分享图片'
 		try:
-			print('posting %d of %d...' % (i, len(weibo_posts)))
-			if post['post'] == '':
-				post['post'] = u'分享图片'
 			browser.find_element_by_xpath('//textarea[@title="微博输入框"]').send_keys(post['post'])
-			sleep(2)
-			browser.find_element_by_xpath('//input[@name="pic1"]').send_keys(post['image_path'])
-			sleep(5)
-			browser.find_element_by_xpath('//a[@title="发布微博按钮"]').send_keys(Keys.ENTER)
-			i += 1
-			sleep(5)
-		except:
-			browser.find_element_by_xpath('//textarea[@title="微博输入框"]').clear()
-			sleep(1)
-			browser.find_element_by_xpath('//input[@name="pic1"]').clear()
-			sleep(1)
-	print('finished all weibo posts.')
+		except WebDriverException:
+			browser.execute_script('document.getElementsByTagName("textarea")[0].value = "%s"' % post['post'])
+		sleep(1)
+		browser.find_element_by_xpath('//input[@name="pic1"]').send_keys(post['image_path'])
+		sleep(3)
+		browser.find_element_by_xpath('//a[@title="发布微博按钮"]').send_keys(Keys.ENTER)
+		sleep(3)
+		i += 1
+		print(' succeeded.')
+		last_post = post['url']
+	print('Finished all weibo posts.')
+	if ins_latest != '':
+		with open(INS_LATEST, 'w') as f:
+			f.write(ins_latest)
 
+def hibernate(interval):
+	print('Hibernating for %d seconds...' % interval)
+	sleep(interval)
+
+def cleanup(browser):
+	print('Cleaning up...')
+	if os.path.exists(TEMP_PATH):
+		shutil.rmtree(TEMP_PATH)
+	browser.quit()
 
 def main():
-	initialize()
 	user_info = load_user_info()
 	browser = setup_browser()
+	atexit.register(cleanup, browser)
 	set_current_ins_state(browser, user_info['ins_id'])
 	login_weibo(browser, user_info['weibo_id'], user_info['weibo_pass'])
 	# in a loop
-	ins_posts = get_ins_diff_posts(browser, user_info['ins_id'])
-	weibo_posts = ins_to_weibo_posts(browser, user_info['ins_id'], ins_posts)
-	# weibo_access_token = get_weibo_access_token(browser, user_info['weibo_id'], user_info['weibo_pass'])
-	post_weibo(browser, weibo_posts)
-	sleep(3600)
-
+	while True:
+		ins_posts = get_ins_diff_posts(browser, user_info['ins_id'])
+		weibo_posts = ins_to_weibo_posts(browser, user_info['ins_id'], ins_posts)
+		post_weibo(browser, weibo_posts)
+		hibernate(UPDATE_INTERVAL)
 
 if (__name__ == '__main__'):
 	main()
