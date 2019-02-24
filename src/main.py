@@ -25,10 +25,9 @@ from bs4 import BeautifulSoup
 INFO_FILE = os.path.join(Path.home(), '.instaweibo_info')
 SECRET = os.path.join(Path.home(), '.secret')
 INS_LATEST = os.path.join(Path.home(), '.insta_latest')
-WEIBO_TOKEN = os.path.join(Path.home(), '.weibo_credentials')
 ROOT_PATH = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TEMP_PATH = os.path.join(ROOT_PATH, 'temp')
-UPDATE_INTERVAL = 3600
+UPDATE_INTERVAL = 120
 
 def get_key():
 	if os.path.isfile(SECRET):
@@ -109,7 +108,10 @@ def set_current_ins_state(browser, ins_id):
 	html = browser.page_source
 	soup = BeautifulSoup(html, 'html.parser')
 	article = soup.find('article')
-	ins_latest = article.find('a').get('href')
+	try:
+		ins_latest = article.find('a').get('href')
+	except:
+		ins_latest = ''
 	with open(INS_LATEST, 'w') as f:
 		f.write(ins_latest)
 
@@ -119,7 +121,8 @@ def get_ins_diff_posts(browser, ins_id):
 		latest = f.read()
 	browser.switch_to_window(browser.window_handles[0])
 	browser.get('https://www.instagram.com/%s/' % ins_id)
-	for i in range(1):
+	num_prev_posts = 0
+	while True:
 		html = browser.page_source
 		soup = BeautifulSoup(html, 'html.parser')
 		article = soup.find('article')
@@ -131,6 +134,9 @@ def get_ins_diff_posts(browser, ins_id):
 			idx = links.index(latest)
 			links = links[:idx]
 			break
+		if num_prev_posts == len(alist):
+			break
+		num_prev_posts = len(alist)
 		browser.execute_script("window.scrollTo(0, document.body.scrollHeight);")
 		sleep(0.5)
 	links.reverse()
@@ -205,6 +211,8 @@ def cleanup(browser):
 	print('Cleaning up...')
 	if os.path.exists(TEMP_PATH):
 		shutil.rmtree(TEMP_PATH)
+	if os.path.exists(INS_LATEST):
+		os.remove(INS_LATEST)
 	browser.quit()
 
 def main():
@@ -213,7 +221,6 @@ def main():
 	atexit.register(cleanup, browser)
 	set_current_ins_state(browser, user_info['ins_id'])
 	login_weibo(browser, user_info['weibo_id'], user_info['weibo_pass'])
-	# in a loop
 	while True:
 		ins_posts = get_ins_diff_posts(browser, user_info['ins_id'])
 		weibo_posts = ins_to_weibo_posts(browser, user_info['ins_id'], ins_posts)
