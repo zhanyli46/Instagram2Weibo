@@ -1,14 +1,17 @@
 # -*- coding: utf-8 -*-
-import os
-import json
-import getpass
-import shutil
-import requests
-import time
+
+___author___ = 'Zhanyang Li'
+___version___ = '0.1'
+___email___ = 'zhanyli46.dev@gmail.com'
+
 import atexit
-from urllib import request
+import getpass
+import json
+import os
+import shutil
+import sys
 from base64 import b64encode, b64decode
-from time import sleep
+from bs4 import BeautifulSoup
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad, unpad
 from Crypto.Random import get_random_bytes
@@ -20,14 +23,14 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from bs4 import BeautifulSoup
+from time import sleep
+from urllib import request
 
 INFO_FILE = os.path.join(Path.home(), '.instaweibo_info')
 SECRET = os.path.join(Path.home(), '.secret')
 INS_LATEST = os.path.join(Path.home(), '.insta_latest')
-ROOT_PATH = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-TEMP_PATH = os.path.join(ROOT_PATH, 'temp')
-UPDATE_INTERVAL = 120
+TEMP_PATH = os.path.join(Path.home(), 'temp')
+UPDATE_INTERVAL = 21600
 
 def get_key():
 	if os.path.isfile(SECRET):
@@ -88,21 +91,20 @@ def load_user_info():
 def setup_browser():
 	print('Setting up headless Chrome browser...')
 	options = Options()
-	# options.add_argument('--headless')
-	# options.add_argument('--disable-gpu')
-	driver_path = os.path.join(ROOT_PATH, 'bin', 'chromedriver.exe')
+	window_size = '1024,768'
+	user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/72.0.3626.109 Safari/537.36'
+	options.add_argument('--window-size=%s' % window_size)
+	options.add_argument('--user-agent=%s' % user_agent)
+	options.add_argument('--headless')
+	options.add_argument('--disable-gpu')
+	options.add_argument('--disable-web-security')
+	driver_path = os.path.join(sys._MEIPASS, 'chromedriver.exe')
 	browser = webdriver.Chrome(executable_path=driver_path, options=options)
 	browser.execute_script('window.open("")')
-	browser.set_window_size(1024, 768)
 	return browser
 
 def set_current_ins_state(browser, ins_id):
 	print('Recording current instagram post state...')
-	########## debug ###########
-	# with open(INS_LATEST, 'w') as f:
-	# 	f.write('/p/Bt1QJy1lwb1/')
-	# return
-	########## debug ###########
 	browser.switch_to_window(browser.window_handles[0])
 	browser.get('https://www.instagram.com/%s/' % ins_id)
 	html = browser.page_source
@@ -114,6 +116,15 @@ def set_current_ins_state(browser, ins_id):
 		ins_latest = ''
 	with open(INS_LATEST, 'w') as f:
 		f.write(ins_latest)
+
+def login_weibo(browser, weibo_id, weibo_pass):
+	print('Logging in to weibo...')
+	browser.switch_to_window(browser.window_handles[1])
+	weibo_url = 'https://www.weibo.com/login.php'
+	browser.get(weibo_url)
+	browser.find_element_by_name('username').send_keys(weibo_id)
+	browser.find_element_by_name('password').send_keys(weibo_pass)
+	browser.find_element_by_class_name('W_btn_a').send_keys(Keys.ENTER)
 
 def get_ins_diff_posts(browser, ins_id):
 	print('Retrieving new instagram posts...')
@@ -163,15 +174,6 @@ def ins_to_weibo_posts(browser, ins_id, ins_posts):
 			f.write(request.urlopen(image_url).read())
 		weibo_posts.append({'image_path': image_path, 'post': post, 'url': post_url})
 	return weibo_posts
-
-def login_weibo(browser, weibo_id, weibo_pass):
-	print('Logging in to weibo...')
-	browser.switch_to_window(browser.window_handles[1])
-	weibo_url = 'https://www.weibo.com/login.php'
-	browser.get(weibo_url)
-	browser.find_element_by_name('username').send_keys(weibo_id)
-	browser.find_element_by_name('password').send_keys(weibo_pass)
-	browser.find_element_by_class_name('W_btn_a').send_keys(Keys.ENTER)
 
 def post_weibo(browser, weibo_posts):
 	if len(weibo_posts) == 0:
