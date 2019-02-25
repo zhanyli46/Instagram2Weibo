@@ -30,7 +30,7 @@ INFO_FILE = os.path.join(Path.home(), '.instaweibo_info')
 SECRET = os.path.join(Path.home(), '.secret')
 INS_LATEST = os.path.join(Path.home(), '.insta_latest')
 TEMP_PATH = os.path.join(Path.home(), 'temp')
-UPDATE_INTERVAL = 21600
+UPDATE_INTERVAL = 1800
 
 def get_key():
 	if os.path.isfile(SECRET):
@@ -201,9 +201,9 @@ def post_weibo(browser, weibo_posts):
 		print(' succeeded.')
 		last_post = post['url']
 	print('Finished all weibo posts.')
-	if ins_latest != '':
+	if last_post != '':
 		with open(INS_LATEST, 'w') as f:
-			f.write(ins_latest)
+			f.write(last_post)
 
 def hibernate(interval):
 	print('Hibernating for %d seconds...' % interval)
